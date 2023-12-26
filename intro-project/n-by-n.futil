@@ -5,10 +5,16 @@ component main(@go go: 1) -> (@done done: 1) {
 
     cells {
 
-        // initialize memory
+        // Initializes memory. Stores matrices like a tensor; 
+        // matrix A: nxp is "layer 1", B: pxm is "layer 2", and C is "layer 3" of 3D memory.
+        // Index into memory with 32 bits.
+
+        // Change the dimensions of each layer to be dxd, where d = max {n, p, m}!
         @external(1) mem = std_mem_d3(32, 3, 3, 3, 32, 32, 32);
 
         // stores value of n, m w.r.t. nxp, pxm matrix multiplication
+
+        // Change the dimensions to reflect sizes of matrices A and B!
         n = std_const(32, 2);
         p = std_const(32, 3);
         m = std_const(32, 2);
@@ -188,7 +194,7 @@ component main(@go go: 1) -> (@done done: 1) {
                             incr_column_indx;    
                         }        
                     }
-                    
+
                     // start computing elements at the beginning of the next row
                     par {
                         put_zero_j; incr_row_indx;
