@@ -1,0 +1,235 @@
+import "primitives/core.futil";
+import "primitives/binary_operators.futil";
+
+
+component dot_prod(v1a: 32, v1b: 32, v2a: 32, v2b: 32) -> (out: 32) {
+
+    cells {
+        mul1 = std_mult_pipe(32);
+        mul2 = std_mult_pipe(32);
+        add = std_add(32);
+        r1 = std_reg(32);
+        r2 = std_reg(32);
+    }
+
+    wires {
+        // perform multiplication of v1a and v1b
+        group do_mul1 {
+            mul1.left = v1a;
+            mul1.right = v2a;
+            mul1.go = 1'd1;
+            r1.in = mul1.out;
+            r1.write_en = mul1.done;
+            do_mul1[done] = r1.done;
+        }
+        // perform second multiplication (v2a, v2b) with different hardware
+        group do_mul2 {
+            mul2.left = v1b;
+            mul2.right = v2b;
+            mul2.go = 1'd1;
+            r2.in = mul2.out;
+            r2.write_en = mul2.done;
+            do_mul2[done] = r2.done;
+        }
+        // re-use register r1 to store output of dot product
+        group do_add {
+            add.left = r1.out;
+            add.right = r2.out;
+            r1.in = add.out;
+            r1.write_en = 1'd1;
+            do_add[done] = r1.done;
+        }
+        out = r1.out;
+    }
+
+    control {
+        seq {
+            par {
+                do_mul1; 
+                do_mul2;
+            }
+            do_add;
+        }
+    }
+}
+
+component state_transition(st1: 1, st2: 1) -> (st1_new: 1, st2_new: 1) {
+    
+    cells {
+        xor_gate = std_xor(1);
+        not_gate = std_not(1);
+        A_reg = std_reg(1);
+        B_reg = std_reg(1);
+    }
+
+    wires {
+        group st1_transition {
+            xor_gate.left = st1;
+            xor_gate.right = st2;
+            A_reg.in = xor_gate.out;
+            A_reg.write_en = 1'b1;
+            st1_transition[done] = A_reg.done;
+        }
+        group st2_transition {
+            not_gate.in = st2;
+            B_reg.in = not_gate.out;
+            B_reg.write_en = 1'b1;
+            st2_transition[done] = B_reg.done;
+        }
+        st1_new = A_reg.out;
+        st2_new = B_reg.out;
+    }
+
+    control {
+        par {
+            st1_transition;
+            st2_transition;
+        }
+    }
+}
+
+component main(@go go: 1) -> (@done done: 1) {
+
+    cells {
+
+        @external(1) mem = std_mem_d3(32, 3, 2, 2, 2, 1, 1);
+        dot = dot_prod();
+        next = state_transition();
+        
+        // stores 4 vals necessary to compute each elt of new matrix
+        v1a = std_reg(32);
+        v1b = std_reg(32);
+        v2a = std_reg(32);
+        v2b = std_reg(32);
+
+        // stores new element of matrix following computation
+        comp = std_reg(32);
+
+        // encodes state (i.e. compute elt i, j of new matrix)
+        st1 = std_reg(1);
+        st2 = std_reg(1);
+
+        // updates to show which elements have been computed
+        entries_filled = std_reg(32);
+        add = std_add(32);
+        lt = std_lt(32);
+    }
+    wires {
+
+        // initialize state
+        group init {
+            entries_filled.in = 32'd1;
+            st1.in = 1'd0;
+            st2.in = 1'd0;
+            entries_filled.write_en = 1'b1;
+            st1.write_en = 1'b1;
+            st2.write_en = 1'b1;
+            init[done] = st2.done;
+        }
+        
+        // define series of loads to place relevant matrix elements in correct registers
+        group load1a {
+            mem.addr0 = 2'b00;
+            mem.addr1 = st1.out;
+            mem.addr2 = 1'b0;
+            v1a.in = mem.read_data;
+            v1a.write_en = mem.done;
+            load1a[done] = v1a.done;
+        }
+
+        group load1b {
+            mem.addr0 = 2'b00;
+            mem.addr1 = st1.out;
+            mem.addr2 = 1'b1;
+            v1b.in = mem.read_data;
+            v1b.write_en = 1'b1;
+            load1b[done] = v1b.done;
+        }
+
+        group load2a {
+            mem.addr0 = 2'b01;
+            mem.addr1 = 1'b0;
+            mem.addr2 = st2.out;
+            v2a.in = mem.read_data;
+            v2a.write_en = 1'b1;
+            load2a[done] = v2a.done;
+        }
+
+        group load2b {
+            mem.addr0 = 2'b01;
+            mem.addr1 = 1'b1;
+            mem.addr2 = st2.out;
+            v2b.in = mem.read_data;
+            v2b.write_en = 1'b1;
+            load2b[done] = v2b.done;
+        }
+
+        // perform computation on values in registers
+        group do_dot {
+            dot.v1a = v1a.out;
+            dot.v1b = v1b.out;
+            dot.v2a = v2a.out;
+            dot.v2b = v2b.out;
+            dot.go = 1'b1;
+            comp.in = dot.out;
+            comp.write_en = dot.done;
+            do_dot[done] = comp.done;
+        }
+
+        // put computed result in correct spot in memory
+        group store {
+            mem.addr0 = 2'b10;
+            mem.addr1 = st1.out;
+            mem.addr2 = st2.out;
+            mem.write_data = comp.out;
+            mem.write_en = 1'b1;
+            store[done] = mem.done;
+        }
+
+        // figure out which element to compute next, based on element just computed
+        group update_state {
+            next.st1 = st1.out;
+            next.st2 = st2.out;
+            next.go = 1'b1;
+            st1.in = next.st1_new;
+            st2.in = next.st2_new;
+            st1.write_en = next.done;
+            st2.write_en = next.done;
+            update_state[done] = st2.done;
+        }
+
+        // increment counter
+        group incr {
+            add.left = entries_filled.out;
+            add.right = 32'd1;
+            entries_filled.in = add.out;
+            entries_filled.write_en = 1'b1;
+            incr[done] = entries_filled.done;
+        }
+
+        comb group cond {
+            lt.left = entries_filled.out;
+            lt.right = 32'd5;
+        }
+    }
+
+    control {
+        seq {
+            init;
+            while lt.out with cond {
+                seq {
+                    load1a;
+                    load1b;
+                    load2a;
+                    load2b;
+                    do_dot;
+                    store;
+                    par {
+                        update_state;
+                        incr;
+                    }
+                }
+            }
+        }
+    }
+}

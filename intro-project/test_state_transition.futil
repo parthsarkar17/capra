@@ -1,0 +1,88 @@
+component state_transition(st1: 1, st2: 1) -> (st1_new: 1, st2_new: 1) {
+    
+    cells {
+        xor_gate = std_xor(1);
+        not_gate = std_not(1);
+        A_reg = std_reg(1);
+        B_reg = std_reg(1);
+    }
+
+    wires {
+        group st1_transition {
+            xor_gate.left = st1;
+            xor_gate.right = st2;
+            A_reg.in = xor_gate.out;
+            A_reg.write_en = 1'b1;
+            st1_transition[done] = A_reg.done;
+        }
+        group st2_transition {
+            not_gate.in = st2;
+            B_reg.in = not_gate.out;
+            B_reg.write_en = 1'b1;
+            st2_transition[done] = B_reg.done;
+        }
+        st1_new = A_reg.out;
+        st2_new = B_reg.out;
+    }
+
+    control {
+        par {
+            st1_transition;
+            st2_transition;
+        }
+    }
+}
+
+component main(@go go: 1) -> (@done done: 1) {
+
+    cells {
+
+        v1 = std_reg(1);
+        v2 = std_reg(1);
+        mem = std_mem_d1(1, 2, 1);
+        next = state_transition();
+
+    }
+
+    wires {
+
+        group read1 {
+            mem.addr0 = 1'b0;
+            v1.in = mem.read_data;
+            v1.write_en = 1'b1;
+            read2[done] = v1.done;
+        }
+
+        group read2 {
+            mem.addr0 = 1'b1;
+            v2.in = mem.read_data;
+            v2.write_en = 1'b1;
+            read2[done] = v2.done;
+        }
+
+        group update {
+            next.st1 = v1.out;
+            next.st2 = v2.out;
+            next.go = !next.done ? 1'd1;
+            st1.in = next.st1_new;
+            st2.in = next.st2_new;
+            st1.write_en = next.done;
+            st2.write_en = next.done;
+            update[done] = st2.done;
+        }
+
+        group write1 {
+
+        }
+
+        group write2 {
+
+        }
+
+    }
+
+    control {
+
+    }
+
+}

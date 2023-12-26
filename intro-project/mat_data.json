@@ -1,0 +1,11 @@
+{
+    "memory": {
+      "data": [[1, 2, 5 , 6], [3, 4, 7, 8]],
+      "format": {
+        "numeric_type": "bitnum",
+        "is_signed": false,
+        "width": 32
+      }
+    }
+  }
+  

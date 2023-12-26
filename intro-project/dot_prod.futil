@@ -1,0 +1,118 @@
+import "primitives/core.futil";
+import "primitives/binary_operators.futil";
+
+component dot_prod(v1a: 32, v1b: 32, v2a: 32, v2b: 32) -> (out: 32) {
+
+    cells {
+        mul1 = std_mult_pipe(32);
+        mul2 = std_mult_pipe(32);
+        add = std_add(32);
+        r1 = std_reg(32);
+        r2 = std_reg(32);
+    }
+
+    wires {
+        // perform multiplication of v1a and v1b
+        group do_mul1 {
+            mul1.left = v1a;
+            mul1.right = v1b;
+            mul1.go = 1'd1;
+            r1.in = mul1.out;
+            r1.write_en = mul1.done;
+            do_mul1[done] = r1.done;
+        }
+        // perform second multiplication (v2a, v2b) with different hardware
+        group do_mul2 {
+            mul2.left = v2a;
+            mul2.right = v2b;
+            mul2.go = 1'd1;
+            r2.in = mul2.out;
+            r2.write_en = mul2.done;
+            do_mul2[done] = r2.done;
+        }
+        // re-use register r1 to store output of dot product
+        group do_add {
+            add.left = r1.out;
+            add.right = r2.out;
+            r1.in = add.out;
+            r1.write_en = 1'd1;
+            do_add[done] = r1.done;
+        }
+        out = r1.out;
+    }
+
+    control {
+        seq {
+            par {do_mul1; do_mul2;}
+            do_add;
+        }
+    }
+}
+
+component main(@go go: 1) -> (@done done: 1) {
+
+    cells {
+        @external(1) mem = std_mem_d1(32, 5, 3);
+        v1a = std_reg(32);
+        v1b = std_reg(32);
+        v2a = std_reg(32);
+        v2b = std_reg(32);
+        dot = dot_prod();
+        comp = std_reg(32);
+    }
+
+    wires {
+        group read1a {
+            mem.addr0 = 3'b000;
+            v1a.in = mem.read_data;
+            v1a.write_en = 1'd1;
+            read1a[done] = v1a.done;
+        }
+        group read1b {
+            mem.addr0 = 3'b001;
+            v1b.in = mem.read_data;
+            v1b.write_en = 1'd1;
+            read1b[done] = v1b.done;
+        }
+        group read2a {
+            mem.addr0 = 3'b010;
+            v2a.in = mem.read_data;
+            v2a.write_en = 1'd1;
+            read2a[done] = v2a.done;
+        }
+        group read2b {
+            mem.addr0 = 3'b011;
+            v2b.in = mem.read_data;
+            v2b.write_en = 1'd1;
+            read2b[done] = v2b.done;
+        }
+        group do_dot {
+            dot.v1a = v1a.out;
+            dot.v1b = v1b.out;
+            dot.v2a = v2a.out;
+            dot.v2b = v2b.out;
+            dot.go = 1'd1;
+            comp.in = dot.out;
+            comp.write_en = dot.done;
+            do_dot[done] = comp.done;
+        }
+
+        group write {
+            mem.addr0 = 3'b100;
+            mem.write_data = comp.out;
+            mem.write_en = 1'b1;
+            write[done] = mem.done;
+        }
+    }
+
+    control {
+        seq {
+            read1a;
+            read1b;
+            read2a;
+            read2b;
+            do_dot;
+            write;
+        }
+    }
+}

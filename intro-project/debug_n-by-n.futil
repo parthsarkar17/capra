@@ -1,0 +1,146 @@
+import "primitives/core.futil";
+import "primitives/binary_operators.futil";
+
+component main(@go go: 1) -> (@done done: 1) {
+
+    cells {
+
+        // initialize memory
+        @external(1) mem = std_mem_d3(32, 3, 3, 3, 32, 32, 32);
+
+        // stores value of n, m w.r.t. nxp, pxm matrix multiplication
+        n = std_const(32, 2);
+        p = std_const(32, 3);
+        m = std_const(32, 2);
+
+        // total number of elements to fill
+        elements_computed_so_far = std_reg(32);
+        total_num_elements = std_reg(32);
+
+        // compute dot products
+        mul = std_mult_pipe(32);
+        add = std_add(32);
+        intermediate_mult = std_reg(32);
+        store_dot = std_reg(32);
+
+        // store entries from A, B, along with iterative computation of dot product
+        elt_ik = std_reg(32); // k \in {1, ..., p}, i \in {1, ..., n}, j \in {1, ..., m}
+        elt_kj = std_reg(32);
+
+        // store indices of new element we want to compute
+        index_i = std_reg(32);
+        index_j = std_reg(32);
+        index_k = std_reg(32);
+
+        // used for conditional
+        lt = std_lt(32);
+    }
+
+    wires {
+
+        group init {
+
+            // initialize register containing total number of elements needed to compute (n x m)
+            mul.right = n.out;
+            mul.left = m.out;
+            mul.go = !mul.done ? 1'd1;
+            total_num_elements.in = mul.out;
+            total_num_elements.write_en = mul.done;
+
+            // initialize everything else to 0
+            elements_computed_so_far.in = 32'd0;
+            store_dot.in = 32'd0;
+            index_i.in = 32'd0;
+            index_j.in = 32'd0;
+            index_k.in = 32'd0;
+            elements_computed_so_far.write_en = 1'b1;
+            store_dot.write_en = 1'b1;
+            index_i.write_en = 1'b1;
+            index_j.write_en = 1'b1;
+            index_k.write_en = 1'b1;
+
+            init[done] = index_k.done;
+        }
+
+        // load element i, k of matrix A into relevant register
+        group load_ik {
+            mem.addr0 = 32'd0;
+            mem.addr1 = index_i.out;
+            mem.addr2 = index_k.out;
+            elt_ik.in = mem.read_data;
+            elt_ik.write_en = 1'b1;
+            load_ik[done] = elt_ik.done;
+        }
+
+        // load element k, j of matrix B into relevant register
+        group load_kj {
+            mem.addr0 = 32'd1;
+            mem.addr1 = index_k.out;
+            mem.addr2 = index_j.out;
+            elt_kj.in = mem.read_data;
+            elt_kj.write_en = 1'b1;
+            load_kj[done] = elt_kj.done;
+        }
+
+        // compute multiplication of elements A(i, k) and B(k, j)
+        group do_mul {
+            mul.left = elt_ik.out;
+            mul.right = elt_kj.out;
+            mul.go = !mul.done ? 1'd1;
+            intermediate_mult.in = mul.out;
+            intermediate_mult.write_en = mul.done;
+            do_mul[done] = intermediate_mult.done;
+        }
+
+        // increments dot product by result of multiplication
+        group update_dot {
+            add.left = intermediate_mult.out;
+            add.right = store_dot.out;
+            store_dot.in = add.out;
+            store_dot.write_en = 1'b1;
+            update_dot[done] = store_dot.done;
+        }
+
+        // increments the register that holds k \in {1 ,..., p}
+        group incr_local_indx {
+            add.left = 32'd1;
+            add.right = index_k.out;
+            index_k.in = add.out;
+            index_k.write_en = 1'b1;
+            incr_local_indx[done] = index_k.done;
+        }
+
+        // condition for stopping iteration to compute dot product for an element C(i, j),
+        // which is k >= p
+        comb group next_element {
+            lt.left = index_k.out;
+            lt.right = p.out;
+        }
+
+        // write to correct location in memory once dot prod is fully computed
+        group store {
+            mem.addr0 = 32'd2;
+            mem.addr1 = index_i.out;
+            mem.addr2 = index_j.out;
+            mem.write_data = store_dot.out;
+            mem.write_en = 1'b1;
+            store[done] = mem.done;
+        }
+    }
+
+    control {
+        seq {
+            init;
+            while lt.out with next_element {
+                seq {
+                    load_ik;
+                    load_kj;
+                    do_mul;
+                    update_dot;
+                    incr_local_indx;
+                }
+            }
+            store;
+        }
+    }
+}
