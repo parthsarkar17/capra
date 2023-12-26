@@ -133,7 +133,7 @@ component main(@go go: 1) -> (@done done: 1) {
             mem.addr1 = st1.out;
             mem.addr2 = 1'b0;
             v1a.in = mem.read_data;
-            v1a.write_en = mem.done;
+            v1a.write_en = 1'b1;
             load1a[done] = v1a.done;
         }
 
@@ -186,7 +186,6 @@ component main(@go go: 1) -> (@done done: 1) {
             store[done] = mem.done;
         }
 
-        // figure out which element to compute next, based on element just computed
         group update_state {
             next.st1 = st1.out;
             next.st2 = st2.out;
@@ -198,7 +197,6 @@ component main(@go go: 1) -> (@done done: 1) {
             update_state[done] = st2.done;
         }
 
-        // increment counter
         group incr {
             add.left = entries_filled.out;
             add.right = 32'd1;
